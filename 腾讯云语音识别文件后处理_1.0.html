@@ -1,0 +1,254 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>腾讯云语音识别文件后处理</title>
+  <style>
+    body{margin:0;font-family:system-ui,Segoe UI,Roboto,Arial;background:#ffffff;color:#333;display:flex;justify-content:center;padding:40px}
+    .card{background:#f8f9fa;padding:24px;border-radius:14px;box-shadow:0 8px 30px rgba(0,0,0,0.1);width:780px}
+    h1{margin-top:0;font-size:22px}
+    .description{margin-bottom:20px;color:#666;font-size:14px;line-height:1.5}
+    .drop{border:2px dashed #ddd;padding:36px;text-align:center;border-radius:12px;margin:30px 0 20px;cursor:pointer;font-size:18px;font-weight:600;width:300px}
+    .drop.dragover{border-color:#60a5fa;background:rgba(96,165,250,0.08)}
+    .row{margin-top:12px}
+    label{display:block;margin-bottom:4px;color:#666}
+    input[type="number"],input[type="file"]{width:100%;padding:8px;border-radius:8px;border:1px solid #ddd;background:#fff;color:#333}
+    button{margin-top:16px;padding:10px 18px;border:none;border-radius:8px;background:#60a5fa;color:#fff;font-weight:600;cursor:pointer;font-size:16px}
+    button:disabled{opacity:0.4;cursor:not-allowed}
+    button.ready{background:#1890ff;padding:12px 24px;font-size:18px}
+    button.restore{background:#60a5fa}
+    .meta{margin-top:14px;font-size:14px;color:#666}
+    .progress{margin-top:12px;font-size:14px;color:#60a5fa}
+    .file-list{margin-top:10px;max-height:200px;overflow-y:auto;border:1px solid #eee;padding:10px;border-radius:5px;background:#fff}
+    .file-item{padding:3px 0;font-size:13px}
+    .author{margin-top:20px;font-size:12px;color:#999;text-align:right}
+    .inspiration{margin-top:8px;font-size:12px;color:#999;text-align:right}
+    .step-btn{display:block;margin-bottom:15px;background:#1890ff;padding:12px 24px;border-radius:8px;color:#fff;text-decoration:none;font-size:18px;font-weight:600;width:100%;text-align:center;box-sizing:border-box}
+    .step-container{margin-bottom:15px}
+    .step-row{display:flex;gap:20px;margin-bottom:20px;position:relative}
+    .step-left{flex:1}
+    .step-right{flex:1;display:flex;flex-direction:column}
+    .n-value-container{display:flex;align-items:center;gap:10px;margin-top:20px}
+    .n-value-container label{margin-bottom:0;white-space:nowrap}
+    .n-value-container input{width:80px}
+    #processBtn{margin-top:calc(16px + 12px)}
+  </style>
+  <script src="https://cdn.jsdelivr.net/npm/file-saver@2.0.5/dist/FileSaver.min.js"></script>
+</head>
+<body>
+  <div class="card">
+    <h1>腾讯云语音识别文件后处理</h1>
+    
+    <div class="description">
+      把腾讯语音识别到的"通用语音识别_xxxx.WAV.txt"文件转换为.srt字幕文件
+    </div>
+
+    <div class="step-container">
+      <a href="https://console.cloud.tencent.com/asr/demonstrate" class="step-btn" target="_blank">
+        Step 0. 腾讯云语音识别
+      </a>
+    </div>
+
+    <div class="step-content">
+      <div class="step-row">
+        <div class="step-left">
+          <div id="drop" class="drop" tabindex="0">Step 1. 拖放 .txt 文件到此处，或点击选择文件</div>
+          <input id="fileInput" type="file" accept=".txt,text/plain" style="display:none" multiple />
+        </div>
+        <div class="step-right">
+          <button id="processBtn" disabled>Step 2. 转化为.srt字幕文件并下载</button>
+          <div class="n-value-container">
+            <label for="nValue">最多几个人？(默认3)</label>
+            <input id="nValue" type="number" min="0" value="3" />
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="meta" id="meta"></div>
+    <div id="fileList" class="file-list"></div>
+    <div class="progress" id="progress"></div>
+    <div class="author">作者：Leon 和 AI助手</div>
+    <div class="inspiration">inspired by: <a href="https://www.bilibili.com/video/BV17wuhzREhG/?spm_id_from=333.337.search-card.all.click&vd_source=53bdff62676e28fd36845b2dd8a66236" target="_blank">灯珑LoGin</a></div>
+  </div>
+
+  <script>
+    const drop=document.getElementById('drop');
+    const fileInput=document.getElementById('fileInput');
+    const meta=document.getElementById('meta');
+    const fileList=document.getElementById('fileList');
+    const progress=document.getElementById('progress');
+    const processBtn=document.getElementById('processBtn');
+    const nValue=document.getElementById('nValue');
+
+    let files=[];
+
+    function prevent(e){ e.preventDefault(); e.stopPropagation(); }
+    ['dragenter','dragover','dragleave','drop'].forEach(evt=>drop.addEventListener(evt,prevent));
+
+    drop.addEventListener('dragover',()=>drop.classList.add('dragover'));
+    drop.addEventListener('dragleave',()=>drop.classList.remove('dragover'));
+
+    drop.addEventListener('drop',e=>{
+      drop.classList.remove('dragover');
+      const f=[...e.dataTransfer.files].filter(x=>x.name.endsWith('.txt'));
+      if(f.length>0) loadFiles(f);
+    });
+
+    drop.addEventListener('click',()=>fileInput.click());
+    fileInput.addEventListener('change',()=>{
+      const f=[...fileInput.files].filter(x=>x.name.endsWith('.txt'));
+      if(f.length>0) loadFiles(f);
+    });
+
+    function setReadyState(isReady) {
+      if(isReady) {
+        processBtn.classList.add('ready');
+        processBtn.classList.remove('restore');
+        processBtn.textContent = 'Step 2. 转化为.srt字幕文件并下载 (ready)';
+      } else {
+        processBtn.classList.remove('ready');
+        processBtn.classList.add('restore');
+        processBtn.textContent = 'Step 2. 转化为.srt字幕文件并下载';
+      }
+    }
+
+    function loadFiles(fList){
+      files=fList;
+      meta.textContent=`已加载 ${files.length} 个 TXT 文件`;
+      
+      // 显示文件列表
+      fileList.innerHTML = '';
+      files.forEach(file => {
+        const div = document.createElement('div');
+        div.className = 'file-item';
+        div.textContent = file.name;
+        fileList.appendChild(div);
+      });
+      
+      processBtn.disabled=false;
+      setReadyState(true);
+      progress.textContent='';
+    }
+
+    function doReplace(text,n){
+      let result=text;
+      for(let i=0;i<=n;i++){
+        const from=","+i+"] ";
+        const to="] "+i+".";
+        result=result.split(from).join(to);
+      }
+      return result;
+    }
+
+    // 将时间格式从 "0:5.170" 转换为 "00:00:05,169"
+    function formatTime(timeStr) {
+      const parts = timeStr.split(':');
+      let minutes = 0;
+      let seconds = 0;
+      
+      if (parts.length === 2) {
+        minutes = parseInt(parts[0]);
+        seconds = parseFloat(parts[1]);
+      } else {
+        seconds = parseFloat(timeStr);
+      }
+      
+      const totalSeconds = minutes * 60 + seconds;
+      const hours = Math.floor(totalSeconds / 3600);
+      const remainingSeconds = totalSeconds % 3600;
+      const finalMinutes = Math.floor(remainingSeconds / 60);
+      const finalSeconds = remainingSeconds % 60;
+      
+      const formattedTime = 
+        String(hours).padStart(2, '0') + ':' +
+        String(finalMinutes).padStart(2, '0') + ':' +
+        String(Math.floor(finalSeconds)).padStart(2, '0') + ',' +
+        String(Math.round((finalSeconds - Math.floor(finalSeconds)) * 1000)).padStart(3, '0');
+      
+      return formattedTime;
+    }
+
+    function convertLineToSrt(line, index) {
+      const regex = /\[([\d:.]+),([\d:.]+)\]\s*(.+)/;
+      const match = line.match(regex);
+      
+      if (!match) return line;
+      
+      const startTime = match[1];
+      const endTime = match[2];
+      const text = match[3];
+      
+      const formattedStartTime = formatTime(startTime);
+      const formattedEndTime = formatTime(endTime);
+      
+      return `${index}\n${formattedStartTime} --> ${formattedEndTime}\n${text}\n`;
+    }
+
+    function convertToSrt(text, n) {
+      let replacedText = doReplace(text, n);
+      const lines = replacedText.split('\n');
+      let srtContent = '';
+      let srtIndex = 1;
+      
+      for (let i = 3; i < lines.length; i++) {
+        const line = lines[i].trim();
+        if (line) {
+          const srtBlock = convertLineToSrt(line, srtIndex);
+          srtContent += srtBlock + '\n';
+          srtIndex++;
+        }
+      }
+      
+      return srtContent;
+    }
+
+    function generateFileName(originalName) {
+      let newName = originalName;
+      newName = newName.replace(/^通用语音识别_/, "");
+      newName = newName.replace(/\.(wav|mp3)\.txt$/i, ".srt");
+      newName = newName.replace(/\.(wav|mp3)$/i, "");
+      if(!newName.toLowerCase().endsWith('.srt')){
+        newName = newName.replace(/\.txt$/i, '.srt');
+      }
+      return newName;
+    }
+
+    processBtn.addEventListener('click',async ()=>{
+      if(files.length===0) return;
+
+      const n=parseInt(nValue.value)||3;
+      
+      processBtn.disabled=true;
+      setReadyState(false);
+      progress.textContent=`正在处理 ${files.length} 个文件...`;
+
+      for(let i=0;i<files.length;i++){
+        const file=files[i];
+        
+        try {
+          const text=await file.text();
+          const srtContent = convertToSrt(text, n);
+          const fileName = generateFileName(file.name);
+          const blob = new Blob([srtContent], { type: 'text/plain;charset=utf-8' });
+          saveAs(blob, fileName);
+          
+          progress.textContent=`已下载 ${i+1}/${files.length}: ${fileName}`;
+          
+          if(i < files.length - 1) {
+            await new Promise(resolve => setTimeout(resolve, 100));
+          }
+          
+        } catch(error) {
+          console.error(`处理文件 ${file.name} 时出错:`, error);
+          progress.textContent=`处理文件 ${file.name} 时出错`;
+        }
+      }
+      
+      progress.textContent=`所有文件处理完成！`;
+      processBtn.disabled=false;
+    });
+  </script>
+</body>
+</html>
